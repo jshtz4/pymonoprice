@@ -132,14 +132,25 @@ class Monoprice:
         self._port.write_timeout = TIMEOUT
         self._port.open()
 
+    def _reset_port(self):
+        """Called when an exception occurs due to a closed connection/broken pipe."""
+        _LOGGER.debug("Attempting to reconnect.")
+        self._port.close()
+        self._port.open()
+
     def _send_request(self, request: bytes) -> None:
         """
         :param request: request that is sent to the monoprice
         """
         _LOGGER.debug('Sending "%s"', request)
-        # clear
-        self._port.reset_output_buffer()
-        self._port.reset_input_buffer()
+        try:
+            # clear
+            self._port.reset_output_buffer()
+            self._port.reset_input_buffer()
+        except (serial.PortNotOpenError, serial.SerialException) as e:
+            _LOGGER.warning(f"{type(e).__name__}: {str(e)}")
+            self._reset_port()
+
         # send
         self._port.write(request)
         self._port.flush()
@@ -155,7 +166,15 @@ class Monoprice:
         result = bytearray()
         count = None
         while True:
-            c = self._port.read(1)
+            try:
+                c = self._port.read(1)
+            except serial.SerialException as e:
+                _LOGGER.warning(f"{type(e).__name__}: {str(e)}")
+                self._reset_port()
+
+                # Restart request processing
+                return self._process_request(request, num_eols_to_read)
+
             if not c:
                 raise serial.SerialTimeoutException(
                     "Connection timed out! Last received bytes {}".format(
